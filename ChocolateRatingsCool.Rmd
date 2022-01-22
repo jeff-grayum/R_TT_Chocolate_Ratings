@@ -22,6 +22,9 @@ library(silgelib)
 library(tidytext)
 library(tidymodels)
 library(textrecipes)
+library(skimr)
+#install.packages("LiblineaR")
+library(LiblineaR)
 theme_set(theme_hc())
 ```
 
@@ -98,5 +101,86 @@ choco_recipe <-
   step_tokenize(most_memorable_characteristics) %>%
   step_tokenfilter(most_memorable_characteristics, max_tokens = 100) %>%
   step_tf(most_memorable_characteristics)
+
+prep(choco_recipe) %>%
+  bake(new_data = NULL) %>%
+  skimr::skim()
+
+prep(choco_recipe) %>%
+  bake(new_data = NULL) %>% 
+  view()
+```
+
+Three characteristics to define what a model is:
+1)Algorithm (e.g., random forest, support vector machine, logistic regression)
+2)The engine.  The computational engine we use to fit the model. Different R packages... carrot, spark.  We're using the defaults , here.
+3) Mode.  Describes the outcome... what kind of problem we're working in. (Classification, regression...)
+```{r}
+
+ranger_spec <-
+  rand_forest(trees = 500) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
+
+ranger_spec
+
+#Now we will make a support vector machine
+svm_spec <- 
+  svm_linear() %>%
+  set_engine("LiblineaR") %>%
+  set_mode("regression")
+
+svm_spec
+```
+
+Now we will build a model workflow (encompasses preprocessing and model).
+```{r}
+ranger_wf <- workflow(choco_recipe, ranger_spec)
+svm_wf <- workflow(choco_recipe, svm_spec)
+```
+
+
+
+```{r}
+doParallel::registerDoParallel()
+contrl_preds <- control_resamples(save_pred = TRUE)
+
+svm_rs <- fit_resamples(
+  svm_wf,
+  resamples = choco_folds,
+  control = contrl_preds
+)
+
+ranger_rs <- fit_resamples(
+  ranger_wf,
+  resamples = choco_folds,
+  control = contrl_preds
+)
+```
+
+Comparing models.
+```{r}
+collect_metrics(svm_rs)
+collect_metrics(ranger_rs)
+
+#Ranger is slightly better.  Rsquared is higher, RMSE is lower.  They are close! Both are actually pretty low.
+```
+
+Let's visualize the results of our regression model!
+```{r}
+bind_rows(
+  collect_predictions(svm_rs) %>%
+    mutate(mod = "SVM"),
+  collect_predictions(ranger_rs) %>%
+    mutate(mod = "Ranger")
+  ) %>%
+  ggplot(aes(rating, .pred, color = id)) +
+  geom_abline(lty = 2, color = "gray50", size = 1.2) +
+  geom_jitter(alpha = 0.5) +
+  facet_wrap(vars(mod)) +
+  coord_fixed() +
+  theme(legend.position = "none")
+  
+
 ```
 
